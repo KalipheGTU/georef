@@ -1,0 +1,81 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Georef</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100vh}
+header{padding:10px 14px;background:#14213d;color:#fff;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header button,header select{padding:6px 12px;border-radius:6px;border:0;cursor:pointer}
+#go{background:#fca311;font-weight:600}#msg{margin-left:auto}
+main{flex:1;display:flex;min-height:0}#imgwrap{flex:1;overflow:auto;position:relative;background:#222}
+#imgbox{position:relative;display:inline-block;cursor:crosshair}#imgbox img{display:block;max-width:none}
+#map{flex:1}.pt{position:absolute;width:20px;height:20px;margin:-10px;border-radius:50%;background:#e63946;color:#fff;font:bold 11px/20px sans-serif;text-align:center;border:2px solid #fff;pointer-events:none}
+.pt.wait{background:#fca311}
+</style></head><body>
+<header>
+ <input type="file" id="file" accept="image/jpeg,image/png">
+ <select id="method"><option value="affine">Affine (3+ pts)</option><option value="poly2">Polynôme 2 (6+ pts)</option><option value="tps">Thin plate spline (4+ pts)</option></select>
+ <button id="undo">Annuler le dernier point</button>
+ <button id="go" disabled>Géoréférencer</button>
+ <span id="msg">1) Chargez une image · 2) cliquez un point sur l'image, puis son équivalent sur la carte</span>
+</header>
+<main><div id="imgwrap"><div id="imgbox"></div></div><div id="map"></div></main>
+<script>
+const $=s=>document.querySelector(s), msg=t=>$("#msg").innerHTML=t;
+const map=new maplibregl.Map({container:"map",center:[2.35,48.85],zoom:5,style:{version:8,sources:{osm:{type:"raster",tileSize:256,attribution:"© OpenStreetMap",tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]}},layers:[{id:"osm",type:"raster",source:"osm"}]}});
+let id=null, img=null, pending=null, gcps=[], imgMarks=[], mapMarks=[];
+const badge=(n,cls="")=>{const e=document.createElement("div");e.className="pt "+cls;e.textContent=n;return e};
+
+$("#file").onchange=async e=>{
+ const f=e.target.files[0]; if(!f) return; msg("Envoi…");
+ const fd=new FormData(); fd.append("file",f);
+ const r=await fetch("/api/maps",{method:"POST",body:fd});
+ if(!r.ok){msg("Erreur : "+(await r.json()).detail);return}
+ const j=await r.json(); id=j.id; reset();
+ $("#imgbox").innerHTML=`<img src="${j.image}">`; img=$("#imgbox img");
+ img.onclick=onImg; msg("Cliquez un point sur l'image");
+};
+function reset(){gcps=[];pending=null;mapMarks.forEach(m=>m.remove());mapMarks=[];imgMarks.forEach(m=>m.remove());imgMarks=[];upd()}
+function onImg(ev){
+ if(pending) return msg("Placez d'abord le point sur la carte");
+ const r=img.getBoundingClientRect(), k=img.naturalWidth/r.width;
+ pending={px:(ev.clientX-r.left)*k,py:(ev.clientY-r.top)*k};
+ const b=badge(gcps.length+1,"wait");b.style.left=(ev.clientX-r.left)+"px";b.style.top=(ev.clientY-r.top)+"px";
+ $("#imgbox").appendChild(b);imgMarks.push(b);msg("Cliquez maintenant l'emplacement sur la carte");
+}
+map.on("click",e=>{
+ if(!pending) return msg("Cliquez d'abord sur l'image");
+ gcps.push({...pending,lon:e.lngLat.lng,lat:e.lngLat.lat});pending=null;
+ imgMarks.at(-1).classList.remove("wait");
+ mapMarks.push(new maplibregl.Marker({element:badge(gcps.length)}).setLngLat(e.lngLat).addTo(map));
+ upd();
+});
+$("#undo").onclick=()=>{
+ if(pending){imgMarks.pop().remove();pending=null}
+ else if(gcps.length){gcps.pop();imgMarks.pop().remove();mapMarks.pop().remove()}
+ upd();
+};
+function upd(){$("#go").disabled=!id||gcps.length<3;msg(`${gcps.length} point(s)`)}
+$("#go").onclick=async()=>{
+ $("#go").disabled=true;msg("Traitement en cours…");
+ const r=await fetch(`/api/maps/${id}/process`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({gcps,method:$("#method").value})});
+ if(!r.ok){msg("Erreur : "+(await r.json()).detail);$("#go").disabled=false;return}
+ const t=setInterval(async()=>{
+  const m=await (await fetch("/api/maps/"+id)).json();
+  if(m.status==="processing") msg("Génération des tuiles… "+Math.round((m.progress||0)*100)+" %");
+  if(m.status==="done"){clearInterval(t);showResult(m);$("#go").disabled=false}
+  if(m.status==="error"){clearInterval(t);msg("Erreur : "+m.error);$("#go").disabled=false}
+ },1000);
+};
+
+function showResult(m){
+ if(map.getLayer("res")){map.removeLayer("res");map.removeSource("res")}
+ map.addSource("res",{type:"raster",tileSize:256,bounds:m.bounds,tiles:[location.origin+"/data/"+id+"/tiles/{z}/{x}/{y}.png"]});
+ map.addLayer({id:"res",type:"raster",source:"res"});
+ map.fitBounds([[m.bounds[0],m.bounds[1]],[m.bounds[2],m.bounds[3]]],{padding:40});
+ const e=m.errors||[], rm=Math.sqrt(e.reduce((a,b)=>a+b*b,0)/e.length).toFixed(1);
+ msg(`✅ Terminé · erreur moyenne ${rm} px (max ${Math.max(...e).toFixed(1)}) · opacité <input id="op" type="range" min="0" max="1" step=".05" value="1"> · <a href="#" id="of" style="color:#fca311">Ouvrir le dossier (MBTiles + tuiles)</a>`);
+ $("#op").oninput=ev=>map.setPaintProperty("res","raster-opacity",+ev.target.value);
+ $("#of").onclick=ev=>{ev.preventDefault();fetch(`/api/maps/${id}/open`,{method:"POST"})};
+}
+</script></body></html>
