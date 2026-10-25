@@ -1,4 +1,4 @@
-name: Build Windows exe
+name: Build KalipheTiles
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -6,11 +6,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+        with: { python-version: "3.12" }
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --onefile --windowed --name Georef --add-data "static;static" launcher.py
+      - run: pyinstaller --onefile --windowed --name KalipheTiles --add-data "static;static" launcher.py
       - uses: actions/upload-artifact@v4
-        with:
-          name: Georef-windows
-          path: dist/Georef.exe
+        with: { name: KalipheTiles-windows, path: dist/KalipheTiles.exe }
