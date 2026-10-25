@@ -1,81 +1,337 @@
 <!doctype html><html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Georef</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>KalipheTiles</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/proj4@2.12.1/dist/proj4.js"></script>
 <style>
-*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100vh}
-header{padding:10px 14px;background:#14213d;color:#fff;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-header button,header select{padding:6px 12px;border-radius:6px;border:0;cursor:pointer}
-#go{background:#fca311;font-weight:600}#msg{margin-left:auto}
-main{flex:1;display:flex;min-height:0}#imgwrap{flex:1;overflow:auto;position:relative;background:#222}
-#imgbox{position:relative;display:inline-block;cursor:crosshair}#imgbox img{display:block;max-width:none}
-#map{flex:1}.pt{position:absolute;width:20px;height:20px;margin:-10px;border-radius:50%;background:#e63946;color:#fff;font:bold 11px/20px sans-serif;text-align:center;border:2px solid #fff;pointer-events:none}
+*{box-sizing:border-box}
+body{margin:0;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100vh}
+header{padding:8px 12px;background:#14213d;color:#fff;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+header b{font-size:16px;margin-right:6px}
+button,select{padding:6px 10px;border-radius:6px;border:0;cursor:pointer}
+#go{background:#fca311;font-weight:600}#go:disabled{opacity:.5;cursor:default}
+main{flex:1;display:flex;min-height:0}
+#left{flex:1;display:flex;flex-direction:column;min-width:0;background:#222}
+#iv{flex:1;position:relative;overflow:hidden;cursor:crosshair;touch-action:none}
+#ib{position:absolute;left:0;top:0;transform-origin:0 0}
+#ib img{display:block;max-width:none;user-select:none;-webkit-user-drag:none}
+.zb{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:4px;z-index:2}
+.zb button{width:32px;height:32px;font-size:18px;padding:0}
+#list{height:96px;overflow:auto;background:#fff;font-size:12px;border-top:1px solid #ccc}
+#list div{display:flex;gap:8px;padding:2px 8px}#list span{flex:1}
+#mapwrap{flex:1;position:relative;min-width:0}#map{position:absolute;inset:0}
+.ov{position:absolute;top:8px;left:8px;z-index:5;width:min(430px,calc(100% - 60px));display:flex;flex-direction:column;gap:5px}
+.row{display:flex;gap:4px;align-items:center}
+.ov input[type=text]{flex:1;min-width:0;padding:6px 8px;border:1px solid #bbb;border-radius:6px}
+.ov label{background:#fff;padding:4px 6px;border-radius:6px;font-size:12px;white-space:nowrap}
+#gstep:empty{display:none}
+#res-list{background:#fff;border-radius:6px;max-height:180px;overflow:auto;box-shadow:0 1px 6px #0004}
+#res-list div{padding:6px 8px;cursor:pointer;border-bottom:1px solid #eee}#res-list div:hover{background:#eee}
+.pt{position:absolute;width:22px;height:22px;border-radius:50%;background:#e63946;color:#fff;font:bold 11px/18px sans-serif;text-align:center;border:2px solid #fff;pointer-events:none}
 .pt.wait{background:#fca311}
+.ip{transform:translate(-50%,-50%) scale(var(--inv,1))}
+#status{padding:6px 12px;background:#eee;font-size:13px}
+dialog{border:0;border-radius:10px;padding:18px;width:min(460px,92vw)}
+dialog input{width:100%;padding:6px;margin:4px 0 12px}dialog small{color:#555}
 </style></head><body>
 <header>
+ <b>KalipheTiles</b>
  <input type="file" id="file" accept="image/jpeg,image/png">
  <select id="method"><option value="affine">Affine (3+ pts)</option><option value="poly2">Polynôme 2 (6+ pts)</option><option value="tps">Thin plate spline (4+ pts)</option></select>
- <button id="undo">Annuler le dernier point</button>
+ <select id="base">
+  <optgroup label="Gratuits">
+   <option value="osm">OpenStreetMap</option><option value="topo">Topo (OpenTopoMap)</option>
+   <option value="esri">Satellite (Esri)</option><option value="ignp">IGN Plan</option><option value="igns">IGN Photo aérienne</option></optgroup>
+  <optgroup label="Mapbox (token)"><option value="mbs">Mapbox Satellite</option><option value="mbr">Mapbox Rues</option><option value="mbo">Mapbox Outdoors</option></optgroup>
+  <optgroup label="Google (clé API)"><option value="gr">Google Plan</option><option value="gs">Google Satellite</option></optgroup>
+ </select>
+ <button id="cfg" title="Tokens et clés API">⚙ Clés</button>
+ <button id="undo">Annuler</button>
  <button id="go" disabled>Géoréférencer</button>
- <span id="msg">1) Chargez une image · 2) cliquez un point sur l'image, puis son équivalent sur la carte</span>
 </header>
-<main><div id="imgwrap"><div id="imgbox"></div></div><div id="map"></div></main>
+<main>
+ <div id="left">
+  <div id="iv"><div id="ib"></div>
+   <div class="zb"><button id="zi" title="Zoom +">+</button><button id="zo" title="Zoom −">−</button><button id="zf" title="Ajuster">⤢</button></div></div>
+  <div id="list"></div>
+ </div>
+ <div id="mapwrap"><div id="map"></div>
+  <div class="ov">
+   <div class="row"><input type="text" id="q" placeholder="Chercher un lieu (ville, adresse…)"><button id="qgo">🔍</button></div>
+   <div id="res-list"></div>
+   <div class="row"><input type="text" id="coord" placeholder="Coordonnées : 43.34, 3.21 · 43°20'44&quot;N 3°12'54&quot;E · 31T 500000 4800000 · X Y"></div>
+   <div class="row">
+    <select id="cf"><option value="auto">Auto</option><option value="dd">Degrés (DD / DMS / DDM)</option><option value="utm">UTM</option><option value="l93">Lambert 93</option><option value="merc">Web Mercator</option></select>
+    <label><input type="checkbox" id="lf"> lon, lat</label><button id="cgo">Placer le point</button></div>
+   <div class="row">
+    <label><input type="checkbox" id="gon"> Grille</label>
+    <select id="gsys"><option value="ll">Lat / Lon</option><option value="utm">UTM</option><option value="l93">Lambert 93</option></select>
+    <input type="text" id="gst" placeholder="pas (° ou m)" style="max-width:100px">
+    <label><input type="checkbox" id="snap"> Aimanter</label><label id="gstep"></label></div>
+  </div>
+ </div>
+</main>
+<div id="status">1) Chargez une image · 2) placez un point sur l'image, puis sa position sur la carte (clic ou coordonnées)</div>
+<dialog id="dlg">
+ <h3 style="margin-top:0">Clés et tokens</h3>
+ Token Mapbox <input id="k-mb" placeholder="pk.…">
+ Clé API Google (Map Tiles API activée) <input id="k-g" placeholder="AIza…">
+ <small>Enregistrés en clair sur ce PC (fichier .kaliphetiles.json dans votre dossier utilisateur).</small>
+ <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="k-cancel">Annuler</button><button id="k-save" style="background:#fca311">Enregistrer</button></div>
+</dialog>
 <script>
-const $=s=>document.querySelector(s), msg=t=>$("#msg").innerHTML=t;
-const map=new maplibregl.Map({container:"map",center:[2.35,48.85],zoom:5,style:{version:8,sources:{osm:{type:"raster",tileSize:256,attribution:"© OpenStreetMap",tiles:["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]}},layers:[{id:"osm",type:"raster",source:"osm"}]}});
-let id=null, img=null, pending=null, gcps=[], imgMarks=[], mapMarks=[];
-const badge=(n,cls="")=>{const e=document.createElement("div");e.className="pt "+cls;e.textContent=n;return e};
+const $=s=>document.querySelector(s), st=t=>$("#status").innerHTML=t;
 
-$("#file").onchange=async e=>{
- const f=e.target.files[0]; if(!f) return; msg("Envoi…");
- const fd=new FormData(); fd.append("file",f);
- const r=await fetch("/api/maps",{method:"POST",body:fd});
- if(!r.ok){msg("Erreur : "+(await r.json()).detail);return}
- const j=await r.json(); id=j.id; reset();
- $("#imgbox").innerHTML=`<img src="${j.image}">`; img=$("#imgbox img");
- img.onclick=onImg; msg("Cliquez un point sur l'image");
-};
-function reset(){gcps=[];pending=null;mapMarks.forEach(m=>m.remove());mapMarks=[];imgMarks.forEach(m=>m.remove());imgMarks=[];upd()}
-function onImg(ev){
- if(pending) return msg("Placez d'abord le point sur la carte");
- const r=img.getBoundingClientRect(), k=img.naturalWidth/r.width;
- pending={px:(ev.clientX-r.left)*k,py:(ev.clientY-r.top)*k};
- const b=badge(gcps.length+1,"wait");b.style.left=(ev.clientX-r.left)+"px";b.style.top=(ev.clientY-r.top)+"px";
- $("#imgbox").appendChild(b);imgMarks.push(b);msg("Cliquez maintenant l'emplacement sur la carte");
+/*COORDS*/
+const L93="+proj=lcc +lat_0=46.5 +lon_0=3 +lat_1=49 +lat_2=44 +x_0=700000 +y_0=6600000 +ellps=GRS80 +units=m +no_defs";
+const NUM=/-?\d+(?:[.,]\d+)?/g, num=s=>parseFloat(s.replace(",","."));
+const dms=n=>{const neg=n[0].trim().startsWith("-"),v=n.map(s=>Math.abs(num(s)));const d=v[0]+(v[1]||0)/60+(v[2]||0)/3600;return neg?-d:d};
+function parseGeo(t,lonFirst){
+ let lat,lon;
+ if(/[NSEWOnsewo]/.test(t)){
+  const ch=t.match(/[^NSEWOnsewo]+[NSEWOnsewo]|[NSEWOnsewo][^NSEWOnsewo]+/g)||[];
+  if(ch.length!=2)throw "deux coordonnées attendues (lat et lon)";
+  for(const c of ch){
+   const L=c.match(/[NSEWOnsewo]/)[0].toUpperCase(),n=c.match(NUM);
+   if(!n)throw "nombre manquant";
+   let v=Math.abs(dms(n)); if("SWO".includes(L)||n[0].trim().startsWith("-"))v=-v;
+   if("NS".includes(L))lat=v;else lon=v;
+  }
+  if(lat===undefined||lon===undefined)throw "il faut une latitude (N/S) et une longitude (E/O)";
+ }else{
+  const n=t.match(NUM)||[];
+  if(![2,4,6].includes(n.length))throw "format non reconnu";
+  const h=n.length/2,a=dms(n.slice(0,h)),b=dms(n.slice(h));
+  [lat,lon]=lonFirst?[b,a]:[a,b];
+ }
+ if(Math.abs(lat)>90||Math.abs(lon)>180)throw "latitude/longitude hors limites";
+ return{lon,lat};
 }
-map.on("click",e=>{
- if(!pending) return msg("Cliquez d'abord sur l'image");
- gcps.push({...pending,lon:e.lngLat.lng,lat:e.lngLat.lat});pending=null;
- imgMarks.at(-1).classList.remove("wait");
- mapMarks.push(new maplibregl.Marker({element:badge(gcps.length)}).setLngLat(e.lngLat).addTo(map));
- upd();
-});
-$("#undo").onclick=()=>{
- if(pending){imgMarks.pop().remove();pending=null}
- else if(gcps.length){gcps.pop();imgMarks.pop().remove();mapMarks.pop().remove()}
- upd();
+function parseUTM(t,needBand){
+ const m=t.trim().match(/^(\d{1,2})\s*([A-Za-z])?[\s,;]+(\d+(?:[.,]\d+)?)\s*(?:m?E)?[\s,;]+(\d+(?:[.,]\d+)?)\s*(?:m?N)?$/i);
+ if(!m||(needBand&&!m[2]))return null;
+ const z=+m[1]; if(z<1||z>60)return null;
+ const south=m[2]&&m[2].toUpperCase()<"N";
+ const r=proj4(`+proj=utm +zone=${z}${south?" +south":""} +datum=WGS84 +units=m +no_defs`,"WGS84",[num(m[3]),num(m[4])]);
+ return{lon:r[0],lat:r[1]};
+}
+function parseCoords(t,fmt,lonFirst){
+ t=t.trim(); if(!t)throw "coordonnées vides";
+ const fin=p=>{if(!isFinite(p.lon)||!isFinite(p.lat)||Math.abs(p.lat)>85.06||Math.abs(p.lon)>180)throw "coordonnées hors limites";return p};
+ const proj=(def,t)=>{const p=t.match(NUM)||[];if(p.length!=2)throw "deux nombres attendus (X Y)";const r=proj4(def,"WGS84",p.map(num));return{lon:r[0],lat:r[1]}};
+ if(fmt=="utm"){const u=parseUTM(t,false);if(!u)throw "format UTM : 31T 500000 4800000";return fin(u)}
+ if(fmt=="l93")return fin(proj(L93,t));
+ if(fmt=="merc")return fin(proj("EPSG:3857",t));
+ if(fmt=="dd")return fin(parseGeo(t,lonFirst));
+ const u=parseUTM(t,true); if(u)return fin(u);
+ try{return fin(parseGeo(t,lonFirst))}catch(e){
+  const p=(t.match(NUM)||[]).map(num);
+  if(p.length==2&&!/[°'"′″NSEWOnsewo]/.test(t)){
+   if(p[0]>=0&&p[0]<=1.4e6&&p[1]>=6e6&&p[1]<=7.3e6)return fin(proj(L93,t));
+   if(Math.max(Math.abs(p[0]),Math.abs(p[1]))>1000&&Math.abs(p[0])<=20037508&&Math.abs(p[1])<=20037508)return fin(proj("EPSG:3857",t));
+  }
+  throw e;
+ }
+}
+/*ENDCOORDS*/
+
+// ---------- Fonds de carte ----------
+let cfg={mapbox:"",google:""}, curBase="osm";
+const mb=s=>()=>{if(!cfg.mapbox)throw "Token Mapbox manquant (bouton ⚙ Clés)";return[`https://api.mapbox.com/styles/v1/mapbox/${s}/tiles/256/{z}/{x}/{y}@2x?access_token=${cfg.mapbox}`]};
+const gg=t=>async()=>{
+ if(!cfg.google)throw "Clé Google manquante (bouton ⚙ Clés)";
+ const r=await fetch("https://tile.googleapis.com/v1/createSession?key="+cfg.google,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mapType:t,language:"fr-FR",region:"FR"})});
+ const j=await r.json(); if(!j.session)throw "Google : "+(j.error&&j.error.message||"échec");
+ return[`https://tile.googleapis.com/v1/2dtiles/{z}/{x}/{y}?session=${j.session}&key=${cfg.google}`];
 };
-function upd(){$("#go").disabled=!id||gcps.length<3;msg(`${gcps.length} point(s)`)}
+const ign=(l,f)=>()=>[`https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${l}&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=${f}`];
+const BASES={
+ osm:{t:()=>["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],a:"© OpenStreetMap",z:19},
+ topo:{t:()=>["https://tile.opentopomap.org/{z}/{x}/{y}.png"],a:"© OpenTopoMap, OSM",z:17},
+ esri:{t:()=>["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],a:"© Esri",z:19},
+ ignp:{t:ign("GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2","image/png"),a:"© IGN",z:18},
+ igns:{t:ign("ORTHOIMAGERY.ORTHOPHOTOS","image/jpeg"),a:"© IGN",z:19},
+ mbs:{t:mb("satellite-streets-v12"),a:"© Mapbox © OSM",z:22},
+ mbr:{t:mb("streets-v12"),a:"© Mapbox © OSM",z:22},
+ mbo:{t:mb("outdoors-v12"),a:"© Mapbox © OSM",z:22},
+ gr:{t:gg("roadmap"),a:"© Google",z:22},
+ gs:{t:gg("satellite"),a:"© Google",z:22}
+};
+const map=new maplibregl.Map({container:"map",center:[2.5,46.6],zoom:4.5,style:{version:8,glyphs:"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",sources:{},layers:[]}});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:false}),"bottom-right");
+map.addControl(new maplibregl.ScaleControl(),"bottom-left");
+async function setBase(id){
+ try{
+  const b=BASES[id],tiles=await b.t();
+  if(map.getLayer("base"))map.removeLayer("base");
+  if(map.getSource("base"))map.removeSource("base");
+  map.addSource("base",{type:"raster",tiles,tileSize:256,maxzoom:b.z,attribution:b.a});
+  map.addLayer({id:"base",type:"raster",source:"base"},map.getLayer("res")?"res":"grid-l");
+  curBase=id;
+ }catch(e){
+  $("#base").value=curBase; st("⚠️ "+(e.message||e));
+  if(/Token|Clé|Google/.test(String(e.message||e)))openCfg();
+ }
+}
+map.on("load",()=>{
+ map.addSource("grid",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+ map.addLayer({id:"grid-l",type:"line",source:"grid",paint:{"line-color":"#d00000","line-width":1,"line-opacity":.75}});
+ map.addLayer({id:"grid-t",type:"symbol",source:"grid",layout:{"symbol-placement":"line","symbol-spacing":320,"text-field":["get","label"],"text-font":["Open Sans Regular,Arial Unicode MS Regular"],"text-size":11},paint:{"text-color":"#900000","text-halo-color":"#fff","text-halo-width":1.6}});
+ setBase("osm");
+});
+$("#base").onchange=e=>setBase(e.target.value);
+
+// ---------- Clés ----------
+fetch("/api/settings").then(r=>r.json()).then(s=>cfg={mapbox:s.mapbox||"",google:s.google||""});
+function openCfg(){$("#k-mb").value=cfg.mapbox;$("#k-g").value=cfg.google;$("#dlg").showModal()}
+$("#cfg").onclick=openCfg; $("#k-cancel").onclick=()=>$("#dlg").close();
+$("#k-save").onclick=async()=>{
+ cfg={mapbox:$("#k-mb").value.trim(),google:$("#k-g").value.trim()};
+ await fetch("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});
+ $("#dlg").close(); st("Clés enregistrées"); setBase($("#base").value);
+};
+
+// ---------- Recherche de lieu ----------
+async function search(){
+ const q=$("#q").value.trim(); if(!q)return; const L=$("#res-list");
+ try{
+  const j=await (await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&accept-language=fr&q="+encodeURIComponent(q))).json();
+  L.innerHTML=j.length?"":"<div>Aucun résultat</div>";
+  j.forEach(x=>{const d=document.createElement("div");d.textContent=x.display_name;
+   d.onclick=()=>{L.innerHTML="";const b=x.boundingbox.map(Number);map.fitBounds([[b[2],b[0]],[b[3],b[1]]],{maxZoom:17,padding:30})};L.appendChild(d)});
+ }catch(e){st("⚠️ Recherche impossible : "+e)}
+}
+$("#qgo").onclick=search; $("#q").onkeydown=e=>{if(e.key=="Enter")search()};
+
+// ---------- Visionneuse d'image (zoom + déplacement) ----------
+let id=null,nat={w:0,h:0},k=1,tx=0,ty=0;
+const iv=$("#iv"),ib=$("#ib");
+const apply=()=>{ib.style.transform=`translate(${tx}px,${ty}px) scale(${k})`;ib.style.setProperty("--inv",1/k)};
+function fit(){const r=iv.getBoundingClientRect();k=Math.min(r.width/nat.w,r.height/nat.h)*.95;tx=(r.width-nat.w*k)/2;ty=(r.height-nat.h*k)/2;apply()}
+function zoomAt(f,cx,cy){const nk=Math.min(40,Math.max(.01,k*f));tx=cx-(cx-tx)*nk/k;ty=cy-(cy-ty)*nk/k;k=nk;apply()}
+iv.addEventListener("wheel",e=>{e.preventDefault();const r=iv.getBoundingClientRect();zoomAt(e.deltaY<0?1.25:.8,e.clientX-r.left,e.clientY-r.top)},{passive:false});
+const mid=f=>()=>{if(nat.w){const r=iv.getBoundingClientRect();zoomAt(f,r.width/2,r.height/2)}};
+$("#zi").onclick=mid(1.5);$("#zo").onclick=mid(1/1.5);$("#zf").onclick=()=>nat.w&&fit();
+let drag=null;
+iv.onpointerdown=e=>{if(e.target.closest(".zb"))return;drag={x:e.clientX,y:e.clientY,tx,ty,m:false};iv.setPointerCapture(e.pointerId)};
+iv.onpointermove=e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4)drag.m=true;if(drag.m){tx=drag.tx+dx;ty=drag.ty+dy;apply()}};
+iv.onpointerup=e=>{
+ if(!drag)return;const d=drag;drag=null;
+ if(!d.m&&nat.w){const r=iv.getBoundingClientRect(),px=(e.clientX-r.left-tx)/k,py=(e.clientY-r.top-ty)/k;
+  if(px>=0&&py>=0&&px<=nat.w&&py<=nat.h)setImg(px,py)}
+};
+
+// ---------- Points de contrôle ----------
+let gcps=[],pend={img:null,geo:null},mm=[];
+const badge=(n,c)=>{const e=document.createElement("div");e.className="pt "+c;e.textContent=n;return e};
+function redraw(){
+ ib.querySelectorAll(".ip").forEach(x=>x.remove());mm.forEach(m=>m.remove());mm=[];
+ const put=(p,n,w)=>{const e=badge(n,"ip"+(w?" wait":""));e.style.left=p.px+"px";e.style.top=p.py+"px";ib.appendChild(e)};
+ const mk=(p,n,w)=>mm.push(new maplibregl.Marker({element:badge(n,w?"wait":"")}).setLngLat([p.lon,p.lat]).addTo(map));
+ gcps.forEach((g,i)=>{put(g,i+1);mk(g,i+1)});
+ if(pend.img)put(pend.img,gcps.length+1,1);
+ if(pend.geo)mk(pend.geo,gcps.length+1,1);
+ $("#list").innerHTML=gcps.map((g,i)=>`<div><b>${i+1}</b><span>image ${g.px.toFixed(0)}, ${g.py.toFixed(0)} → lat ${g.lat.toFixed(6)}, lon ${g.lon.toFixed(6)}</span><a href="#" data-i="${i}">✕</a></div>`).join("")||"<div>Aucun point</div>";
+ $("#go").disabled=!id||gcps.length<3;
+ st(!id?"Chargez d'abord une image":pend.img?"Point image placé → donnez sa position sur la carte (clic ou coordonnées)":pend.geo?"Position carte placée → cliquez le point correspondant sur l'image":`${gcps.length} point(s) · cliquez un point sur l'image (ou une position sur la carte)`);
+}
+function tryDone(){if(pend.img&&pend.geo){gcps.push({...pend.img,...pend.geo});pend={img:null,geo:null}}redraw()}
+function setImg(px,py){pend.img={px,py};tryDone()}
+function setGeo(lon,lat){pend.geo={lon,lat};tryDone()}
+/*GRID*/
+const nice=x=>{const e=Math.pow(10,Math.floor(Math.log10(x))),m=x/e;return(m<=1?1:m<=2?2:m<=5?5:10)*e};
+function gridSys(sys,lon,lat){
+ if(sys=="ll")return{ll:true,fwd:(a,b)=>[a,b],inv:(x,y)=>[x,y]};
+ let def=L93;
+ if(sys=="utm"){const z=Math.min(60,Math.max(1,Math.floor((lon+180)/6)+1));def=`+proj=utm +zone=${z}${lat<0?" +south":""} +datum=WGS84 +units=m +no_defs`}
+ const c=proj4("WGS84",def);
+ return{ll:false,fwd:(a,b)=>c.forward([a,b]),inv:(x,y)=>c.inverse([x,y])};
+}
+function buildGrid(B,sys,manual,zoom){
+ const clat=(B.s+B.n)/2,clon=(B.w+B.e)/2,g=gridSys(sys,clon,clat);
+ const s=Math.max(B.s,-84),n=Math.min(B.n,84),P=[];
+ for(let i=0;i<=12;i++){const t=i/12,lo=B.w+(B.e-B.w)*t,la=s+(n-s)*t;P.push([lo,s],[lo,n],[B.w,la],[B.e,la])}
+ const Q=P.map(p=>g.fwd(p[0],p[1]));
+ let minX=Math.min(...Q.map(q=>q[0])),maxX=Math.max(...Q.map(q=>q[0])),minY=Math.min(...Q.map(q=>q[1])),maxY=Math.max(...Q.map(q=>q[1]));
+ if(g.ll){minY=Math.max(minY,-85);maxY=Math.min(maxY,85)}
+ const mpp=78271.517*Math.cos(clat*Math.PI/180)/Math.pow(2,zoom);
+ const cnt=t=>(maxX-minX)/t+(maxY-minY)/t;
+ let step=manual>0?manual:nice(120*mpp/(g.ll?111320:1));
+ if(manual>0){if(cnt(step)>800)return{features:[],step,g}}else while(cnt(step)>400)step*=2;
+ const dec=Math.min(8,Math.max(0,-Math.floor(Math.log10(step)+1e-9)));
+ const lab=(v,isX)=>g.ll?`${Math.abs(v).toFixed(dec)}°${isX?(v<0?"W":"E"):(v<0?"S":"N")}`:`${isX?"X":"Y"} ${v.toFixed(dec)}`;
+ const feats=[],N=24;
+ for(let i=Math.ceil(minX/step);i<=Math.floor(maxX/step);i++){const x=i*step,co=[];for(let j=0;j<=N;j++)co.push(g.inv(x,minY+(maxY-minY)*j/N));feats.push({type:"Feature",properties:{label:lab(x,true)},geometry:{type:"LineString",coordinates:co}})}
+ for(let i=Math.ceil(minY/step);i<=Math.floor(maxY/step);i++){const y=i*step,co=[];for(let j=0;j<=N;j++)co.push(g.inv(minX+(maxX-minX)*j/N,y));feats.push({type:"Feature",properties:{label:lab(y,false)},geometry:{type:"LineString",coordinates:co}})}
+ return{features:feats,step,g};
+}
+/*ENDGRID*/
+let gridState=null,gq=0;
+function drawGrid(){
+ const src=map.getSource("grid");if(!src)return;
+ if(!$("#gon").checked){src.setData({type:"FeatureCollection",features:[]});gridState=null;$("#gstep").textContent="";return}
+ const b=map.getBounds();
+ try{
+  const r=buildGrid({w:b.getWest(),s:b.getSouth(),e:b.getEast(),n:b.getNorth()},$("#gsys").value,parseFloat($("#gst").value.replace(",",".")),map.getZoom());
+  const f=r.features.filter(x=>x.geometry.coordinates.every(c=>isFinite(c[0])&&isFinite(c[1])));
+  src.setData({type:"FeatureCollection",features:f});
+  gridState={...r.g,step:r.step};
+  $("#gstep").textContent=f.length?"pas "+r.step+(r.g.ll?"°":" m"):"pas trop petit";
+ }catch(e){}
+}
+map.on("move",()=>{if(!gq){gq=1;requestAnimationFrame(()=>{gq=0;drawGrid()})}});
+["gon","gsys"].forEach(i=>$("#"+i).onchange=drawGrid);$("#gst").oninput=drawGrid;
+map.on("click",e=>{
+ let{lng,lat}=e.lngLat,snapped=null;
+ if($("#gon").checked&&$("#snap").checked&&gridState){
+  const g=gridState,[x,y]=g.fwd(lng,lat),sx=Math.round(x/g.step)*g.step,sy=Math.round(y/g.step)*g.step;
+  [lng,lat]=g.inv(sx,sy);
+  const d=Math.max(0,-Math.floor(Math.log10(g.step)+1e-9));
+  snapped=g.ll?`lat ${sy.toFixed(d)}°, lon ${sx.toFixed(d)}°`:`X ${sx.toFixed(d)} · Y ${sy.toFixed(d)}`;
+ }
+ setGeo(lng,lat);
+ if(snapped)st("🧲 Aimanté sur l'intersection "+snapped+" → maintenant le point correspondant sur l'image");
+});
+$("#list").onclick=e=>{const a=e.target.closest("a");if(a){e.preventDefault();gcps.splice(+a.dataset.i,1);redraw()}};
+$("#undo").onclick=()=>{if(pend.img||pend.geo)pend={img:null,geo:null};else gcps.pop();redraw()};
+function placeCoord(){
+ try{
+  const p=parseCoords($("#coord").value,$("#cf").value,$("#lf").checked);
+  setGeo(p.lon,p.lat); map.flyTo({center:[p.lon,p.lat],zoom:Math.max(map.getZoom(),14)});
+ }catch(e){st("⚠️ "+(e.message||e))}
+}
+$("#cgo").onclick=placeCoord; $("#coord").onkeydown=e=>{if(e.key=="Enter")placeCoord()};
+
+// ---------- Envoi / traitement ----------
+$("#file").onchange=async e=>{
+ const f=e.target.files[0];if(!f)return;st("Envoi…");
+ const fd=new FormData();fd.append("file",f);
+ const r=await fetch("/api/maps",{method:"POST",body:fd});
+ if(!r.ok){st("Erreur : "+(await r.json()).detail);return}
+ const j=await r.json();id=j.id;nat={w:j.width,h:j.height};gcps=[];pend={img:null,geo:null};
+ if(map.getLayer("res")){map.removeLayer("res");map.removeSource("res")}
+ ib.innerHTML=`<img src="${j.image}" width="${j.width}" height="${j.height}">`;fit();redraw();
+};
 $("#go").onclick=async()=>{
- $("#go").disabled=true;msg("Traitement en cours…");
+ $("#go").disabled=true;st("Traitement en cours…");
  const r=await fetch(`/api/maps/${id}/process`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({gcps,method:$("#method").value})});
- if(!r.ok){msg("Erreur : "+(await r.json()).detail);$("#go").disabled=false;return}
+ if(!r.ok){st("Erreur : "+(await r.json()).detail);$("#go").disabled=false;return}
  const t=setInterval(async()=>{
   const m=await (await fetch("/api/maps/"+id)).json();
-  if(m.status==="processing") msg("Génération des tuiles… "+Math.round((m.progress||0)*100)+" %");
+  if(m.status==="processing")st("Génération des tuiles… "+Math.round((m.progress||0)*100)+" %");
   if(m.status==="done"){clearInterval(t);showResult(m);$("#go").disabled=false}
-  if(m.status==="error"){clearInterval(t);msg("Erreur : "+m.error);$("#go").disabled=false}
+  if(m.status==="error"){clearInterval(t);st("Erreur : "+m.error);$("#go").disabled=false}
  },1000);
 };
-
 function showResult(m){
  if(map.getLayer("res")){map.removeLayer("res");map.removeSource("res")}
  map.addSource("res",{type:"raster",tileSize:256,bounds:m.bounds,tiles:[location.origin+"/data/"+id+"/tiles/{z}/{x}/{y}.png"]});
- map.addLayer({id:"res",type:"raster",source:"res"});
+ map.addLayer({id:"res",type:"raster",source:"res"},"grid-l");
  map.fitBounds([[m.bounds[0],m.bounds[1]],[m.bounds[2],m.bounds[3]]],{padding:40});
- const e=m.errors||[], rm=Math.sqrt(e.reduce((a,b)=>a+b*b,0)/e.length).toFixed(1);
- msg(`✅ Terminé · erreur moyenne ${rm} px (max ${Math.max(...e).toFixed(1)}) · opacité <input id="op" type="range" min="0" max="1" step=".05" value="1"> · <a href="#" id="of" style="color:#fca311">Ouvrir le dossier (MBTiles + tuiles)</a>`);
+ const e=m.errors||[],rm=Math.sqrt(e.reduce((a,b)=>a+b*b,0)/e.length).toFixed(1);
+ st(`✅ Terminé · erreur moyenne ${rm} px (max ${Math.max(...e).toFixed(1)}) · opacité <input id="op" type="range" min="0" max="1" step=".05" value="1"> · <a href="#" id="of">Ouvrir le dossier (MBTiles + tuiles)</a>`);
  $("#op").oninput=ev=>map.setPaintProperty("res","raster-opacity",+ev.target.value);
  $("#of").onclick=ev=>{ev.preventDefault();fetch(`/api/maps/${id}/open`,{method:"POST"})};
 }
+redraw();
 </script></body></html>
